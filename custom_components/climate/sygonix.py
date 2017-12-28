@@ -18,10 +18,10 @@ import voluptuous as vol
 from homeassistant.components.climate import (
     ClimateDevice,
     PLATFORM_SCHEMA,
-    PRECISION_HALVES,
     STATE_AUTO,
     STATE_ON,
-    STATE_OFF,
+    STATE_OFF, SUPPORT_TARGET_TEMPERATURE, SUPPORT_OPERATION_MODE,
+    SUPPORT_TARGET_TEMPERATURE_HIGH, SUPPORT_TARGET_TEMPERATURE_LOW
 )
 from homeassistant.const import (
     CONF_MAC,
@@ -29,7 +29,8 @@ from homeassistant.const import (
     CONF_PIN,
     TEMP_CELSIUS,
     CONF_DEVICES,
-    ATTR_TEMPERATURE)
+    ATTR_TEMPERATURE,
+    PRECISION_HALVES)
 
 import homeassistant.helpers.config_validation as cv
 
@@ -62,6 +63,7 @@ ATTR_FIRMWARE = 'firmware'
 ATTR_VERSION = 'version'
 ATTR_TARGET = 'target_temp'
 ATTR_BATTERY = 'battery_level'
+ATTR_STATE_WINDOW_OPEN = 'window_open'
 
 MIN_TIME_BETWEEN_UPDATES = timedelta(seconds=10)
 SCAN_INTERVAL = timedelta(seconds=10)
@@ -77,6 +79,7 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
         vol.Schema({cv.string: DEVICE_SCHEMA}),
 })
 
+SUPPORT_FLAGS = (SUPPORT_TARGET_TEMPERATURE | SUPPORT_OPERATION_MODE)
 
 def setup_platform(hass, config, add_devices, discovery_info=None):
     """Setup the Sygonix-compatible thermostats."""
@@ -103,6 +106,9 @@ class SygonixBTThermostat(ClimateDevice):
         self._target = None
         self._state = None
         self._temp = None
+        self._window_open = None
+        self._temp_low = None
+        self._temp_high = None
         self._vname = None
         self._model = None
         self._firmw = None
@@ -141,7 +147,7 @@ class SygonixBTThermostat(ClimateDevice):
     def target_temperature(self):
         """Return the temperature we try to reach."""
         return self._target
-
+        
     def set_temperature(self, **kwargs):
         """Set new target temperature."""
         temperature = kwargs.get(ATTR_TEMPERATURE)
@@ -209,7 +215,13 @@ class SygonixBTThermostat(ClimateDevice):
             ATTR_VERSION:     self._versn,
             ATTR_BATTERY:     self._batty,
             ATTR_TARGET:      self._state,
+            ATTR_STATE_WINDOW_OPEN: self._window_open
         }
+    
+    @property
+    def supported_features(self):
+        """Return the list of supported features."""
+        return SUPPORT_FLAGS
 
     @Throttle(MIN_TIME_BETWEEN_UPDATES)
     def update(self):
@@ -246,6 +258,9 @@ class SygonixBTThermostat(ClimateDevice):
                 data = device.readCharacteristic(0x3f)
                 self._temp = (data[0])/2
                 self._state = (data[1])/2
+                self._temp_low = (data[2])/2
+                self._temp_high = (data[3])/2
+                self._window_open = data[5]
 
                 # if target temp is unkown to hass, use current value from device
                 if self._target is None:
@@ -273,6 +288,10 @@ class SygonixBTThermostat(ClimateDevice):
                     self._firmw = device.readCharacteristic(0x18).decode('utf-8')
                 if (self._versn is None):
                     self._versn = device.readCharacteristic(0x16).decode('utf-8')
+                
+                # Read holiday mode
+                data = device.readCharacteristic(0x2d)
+                
 
                 # successful update, schedule next in 6*10 seconds
                 self._lastupdate = READ_UPDATE_FACTOR
